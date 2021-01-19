@@ -1,0 +1,482 @@
+---
+title: "HRV & Social Skills - Full code"
+author:
+date: "12/3/2020"
+output: html_document
+---
+
+## Setup
+
+```{r, setup, eval=FALSE}
+library(tidyverse) 
+library(readxl) #data import
+library(janitor) # var names cleaning
+library(brms)
+library(tidybayes) #to extract 95%CI
+library(rstan)
+library(future) #parallelization to improve speed
+library(arsenal)
+library(broom)
+library(emmeans)
+
+db_hrv_continui <- read_excel(here::here("db_hrv_continui.xlsx")) %>% 
+  clean_names("lower_camel")
+
+db_scaled <- select(db_hrv_continui, affRec:pnsHf ) %>% 
+  scale() %>% 
+  as_data_frame()
+
+db_scaled_age <- db_hrv_continui %>%  
+  select(affRec:pnsHf, age) %>% 
+  scale() %>% 
+  as_data_frame()
+
+db_scaled_quest <- db_hrv_continui %>% 
+  select(vlf:hf, pnsHf, oppositivitaT:extCutOff ) %>% 
+  scale() %>% 
+  as_data_frame()
+
+db_quest <- db_scaled_quest %>% 
+  mutate(kSads = db_hrv_continui$kSads) 
+
+
+```
+
+## Correlations 
+
+See here for a step-by-step example:
+https://solomonkurz.netlify.app/post/bayesian-robust-correlations-with-brms-and-why-you-should-love-student-s-t/
+
+### HRV vs. Affect recognition e Theory of mind
+Bayesian correlations between HRV bands and social skills
+
+``` {r correlations, eval = FALSE}
+social_skills <- select(db_scaled, affRec, tom) %>% names()
+
+hrv <- select(db_scaled, vlf:pnsHf) %>% names()
+
+df <- expand.grid(hrv, social_skills)%>% 
+  as_tibble() %>% 
+  rename(x = Var1,
+         y = Var2)
+
+correlazioni <- map2(.x = df$x, .y = df$y, ~{
+    
+    model_formula <- paste("mvbind(", .x , ", ", .y, ") ~ 1") %>% as.formula()
+    
+    fit <- brm(
+      data = db_scaled, 
+      family = student,
+      model_formula,
+      prior = c(prior(gamma(2, 0.1), class = nu),
+                prior(normal(0, 1), class = Intercept),
+                set_prior("normal(0, 1)", class = "sigma", resp = .x),
+                set_prior("normal(0, 1)", class = "sigma", resp = .y),
+                prior(lkj(4), class = rescor)),
+      iter = 2000, warmup = 500, chains = 4, future = getOption("future", TRUE),
+      seed = 1234)
+    
+     message(glue::glue("{.x} x {.y} is finished!"))
+ 
+    
+     fit
+  }
+
+  ) %>% set_names(., nm = paste(df$x, df$y))
+
+#saveRDS(correlazioni, here::here("correlazioni.rds"))
+  
+  
+```
+
+### HRV vs. Neuropsychology
+
+```{r correlazioni questionari, eval = FALSE }
+
+hrv_2 <- select(db_quest, vlf:pnsHf) %>% names()
+
+questionari <- select(db_quest, oppositivitaT:kSads) %>% names()
+
+df_2 <- expand.grid(hrv_2, questionari)%>% 
+  as_tibble() %>% 
+  rename(x = Var1,
+         y = Var2)
+
+correlazioni_2 <- map2(.x = df_2$x, .y = df_2$y, ~{
+    
+    model_formula <- paste("mvbind(", .x , ", ", .y, ") ~ 1") %>% as.formula()
+    
+    fit <- brm(
+      data = db_quest , 
+      family = student,
+      model_formula,
+      prior = c(prior(gamma(2, 0.1), class = nu),
+                prior(normal(0, 10), class = Intercept),
+                set_prior("normal(0, 1)", class = "sigma", resp = .x),
+                set_prior("normal(0, 1)", class = "sigma", resp = .y),
+                prior(lkj(4), class = rescor)),
+      iter = 2000, warmup = 500, chains = 4, future = getOption("future", TRUE),
+      seed = 1234)
+    
+     message(glue::glue("{.x} x {.y} is finished!"))
+ 
+    
+     fit
+  }
+
+  ) %>% set_names(., nm = paste(df_2$x, df_2$y))
+
+#saveRDS(correlazioni_2, here::here("correlazioni_questionari.rds"))
+
+```
+
+### Neuropsychology vs. Social Skills
+
+```{r correlazioni questionari vs social skills, eval = FALSE}
+db_quest_skills <- db_hrv_continui %>% select(tom, affRec, ritiroCutOff, 
+                                              lamSomaticheCutOff, ansiaDepressCutOff,
+                                              problSocialiCutOff, problPensieroCutOff,
+                                              problAttenzCutOff, compDelinquenzialeCutOff,
+                                              compAggressivoCutOff) %>% scale() %>% as.data.frame() %>% 
+  mutate(kSads = db_hrv_continui$kSads)
+
+quest_var <- names(select(db_quest_skills, ritiroCutOff:kSads))
+
+df_3 <- expand.grid(social_skills, quest_var)%>% 
+  as_tibble() %>% 
+  rename(x = Var1,
+         y = Var2)
+
+correlazioni_3 <- map2(.x = df_3$x, .y = df_3$y, ~{
+    
+    model_formula <- paste("mvbind(", .x , ", ", .y, ") ~ 1") %>% as.formula()
+    
+    fit <- brm(
+      data = db_quest_skills, 
+      family = student,
+      model_formula,
+      prior = c(prior(gamma(2, 0.1), class = nu),
+                prior(normal(0, 10), class = Intercept),
+                set_prior("normal(0, 1)", class = "sigma", resp = .x),
+                set_prior("normal(0, 1)", class = "sigma", resp = .y),
+                prior(lkj(4), class = rescor)),
+      iter = 2000, warmup = 500, chains = 4, future = getOption("future", TRUE),
+      seed = 1234)
+    
+     message(glue::glue("{.x} x {.y} is finished!"))
+ 
+    
+     fit
+  }
+
+  ) %>% set_names(., nm = paste(df_3$x, df_3$y))
+
+#saveRDS(correlazioni_3, here::here("correlazioni_quest-social_skills.rds"))
+
+
+```
+
+### Extraction of the 95%CI from the models
+
+
+```{r CI extraction, eval = FALSE}
+intervalli_df <- imap_dfr(.x = correlazioni, ~{
+  
+  .x %>% 
+    spread_draws(`rescor_.*`, regex = TRUE) %>% 
+    median_qi() %>% 
+    mutate(variables = .y) %>% 
+    rename_at(vars(contains("rescor")), ~ "corr")
+})
+
+intervalli_df_2 <- imap_dfr(.x = correlazioni_2, ~{
+  
+  .x %>% 
+    spread_draws(`rescor_.*`, regex = TRUE) %>% 
+    median_qi() %>% 
+    mutate(variables = .y) %>% 
+    rename_at(vars(contains("rescor")), ~ "corr")
+})
+
+intervalli_df_3 <- imap_dfr(.x = correlazioni_3, ~{
+  
+  .x %>% 
+    spread_draws(`rescor_.*`, regex = TRUE) %>% 
+    median_qi() %>% 
+    mutate(variables = .y) %>% 
+    rename_at(vars(contains("rescor")), ~ "corr")
+})
+
+```
+
+## Multiple regression
+
+Four models were implemented for each social skill, each one with a different HRV band
+
+### ToM as dependent variable
+
+```{r regressione AFF REC, eval = FALSE}
+
+db_regression <- db_scaled_age %>% mutate(clinIndex = db_hrv_continui$clinIndex,
+                                          gruppo = factor(db_hrv_continui$gruppo))
+
+ar_fit_vlf <- brm(data=db_regression, family = student,
+          affRec ~ 1 + age + clinIndex + gruppo + vlf,
+           prior = c(prior(normal(0, 10), class = Intercept),
+                     prior(normal(0, 1), class = b),
+                     prior(gamma(4, 1),   class = nu),
+                     prior(cauchy(0, 1),  class = sigma)),
+          iter = 2000, warmup = 500, chains = 4, future = getOption("future", TRUE),
+      seed = 1234)
+
+ar_fit_lf <- update(ar_fit_vlf, formula. = ~ . -vlf + lf, newdata=db_regression ) 
+
+ar_fit_hf <- update(ar_fit_vlf, formula. = ~ . -vlf + hf, newdata=db_regression )
+
+ar_fit_pnsHf <- update(ar_fit_vlf, formula. = ~ . -vlf + pnsHf, newdata=db_regression )
+  
+```
+
+### Affect Recognition
+
+```{r regression TOM, eval = FALSE}
+
+tom_fit_vlf <- brm(data=db_regression, family = student,
+          tom ~ 1 + age + clinIndex + gruppo + vlf,
+           prior = c(prior(normal(0, 10), class = Intercept),
+                     prior(normal(0, 1), class = b),
+                     prior(gamma(4, 1),   class = nu),
+                     prior(cauchy(0, 1),  class = sigma)),
+          iter = 2000, warmup = 500, chains = 4, future = getOption("future", TRUE),
+      seed = 1234)
+
+tom_fit_lf <- update(tom_fit_vlf, formula. = ~ . -vlf + lf, newdata=db_regression )
+
+tom_fit_hf <- update(tom_fit_vlf, formula. = ~ . -vlf + hf, newdata=db_regression )
+
+tom_fit_pnsHf <- update(tom_fit_vlf, formula. = ~ . -vlf + pnsHf, newdata=db_regression )
+```
+
+## Two-groups comparison 
+
+Impared/not-impaired children groups were compared using a bayesian linear model.
+This correspond to a classical "t-test" but more robust
+
+### ToM vs. HRV bands
+
+```{r confronto gruppi AFF REC, eval = FALSE}
+db_compare <- db_scaled_age %>% mutate(arDic = db_hrv_continui$arDic,
+                                          tomDic = db_hrv_continui$tomDic)
+
+ar_comp_hf <- brm(data=db_compare, family = student,
+                  bf(hf ~ arDic, sigma ~ arDic),
+          iter = 2000, warmup = 500, chains = 4, future = getOption("future", TRUE),
+      seed = 1234)
+
+ar_comp_lf <- update(ar_comp_hf, formula. = lf ~ ., newdata=db_compare)
+
+ar_comp_vlf <- update(ar_comp_hf, formula. = vlf ~ ., newdata=db_compare)
+
+ar_comp_pnsHf <- update(ar_comp_hf, formula. = pnsHf ~ ., newdata=db_compare)
+
+#r <- tidy(ar_comp_hf, prob = .95)  #visualizzazione 'tidy' del modello
+
+```
+
+### Affect Recognition vs. HRV bands
+
+```{r confronto gruppi TOM, eval = FALSE}
+
+tom_comp_hf <- brm(data=db_compare, family = student,
+                  bf(hf ~ tomDic, sigma ~ tomDic),
+          iter = 2000, warmup = 500, chains = 4, future = getOption("future", TRUE),
+      seed = 1234)
+
+tom_comp_lf <- update(tom_comp_hf, formula. = lf ~ ., newdata=db_compare)
+
+tom_comp_vlf <-  update(tom_comp_hf, formula. = vlf ~ ., newdata=db_compare)
+
+tom_comp_pnsHf <-  update(tom_comp_hf, formula. = pnsHf ~ ., newdata=db_compare)
+
+
+```
+
+
+## Descriptive table for HRV bands in different perinatal-risk groups
+
+```{r descrittive, results='asis', eval=FALSE}
+
+mycontrols  <- tableby.control(test=TRUE, total=TRUE,
+                               numeric.test="kwt", cat.test="fe",
+                               numeric.stats=c("N","range", "medianq1q3",
+                                               "meansd", "Nmiss"),
+                               cat.stats=c("countpct"),
+                               stats.labels=list(N='Count', median='Median', q1q3='Q1,Q3',mean='Mean', meansd="Mean (SD)"),
+                               digits=1)
+
+tab.test <- tableby( gruppo ~ hf + lf + vlf + pnsHf,
+                    data= db_hrv_continui, 
+                    control=mycontrols)
+summary(tab.test, text = T)
+
+#write2word(tab.test, "descrittive_per_gruppo.docx")
+
+
+```
+
+### HRV bands mean values comparison
+
+In replacement of a classical ANOVA, a bayesian linear regression was used
+for robustness and ease of interpretation
+
+```{r confronti delle descrittive HRV, eval=FALSE}
+
+
+db_anova <- db_hrv_continui %>% mutate(gruppo = as_factor(gruppo))
+
+confronto_hf <- brm (hf ~ gruppo, 
+                    data = db_anova, 
+                    family = student, 
+                    prior = c(prior(normal(0, 100), class = b)))
+
+confronto_lf <- update(confronto_hf, formula. = lf ~ ., newdata = db_anova)
+confronto_vlf <- update(confronto_hf, formula. = vlf ~ ., newdata = db_anova)
+confronto_pnsHf <- update(confronto_hf, formula. = pnsHf ~ ., newdata = db_anova)
+
+contr_hf <- emmeans(confronto_hf, ~ gruppo)
+saveRDS(pairs(contr_hf), here::here("pairs_hf.rds"))
+
+
+contr_lf <- emmeans(confronto_lf, ~ gruppo)
+saveRDS(pairs(contr_lf), here::here("pairs_lf.rds"))
+
+contr_vlf <- emmeans(confronto_vlf, ~ gruppo)
+saveRDS(pairs(contr_vlf), here::here("pairs_vlf.rds"))
+
+contr_pnsHf <- emmeans(confronto_pnsHf, ~ gruppo)
+saveRDS(pairs(contr_pnsHf), here::here("pairs_pnsHf.rds"))
+
+```
+
+### Neuropsychology scores mean values comparison
+
+```{r confronti descrittive questionari, eval=FALSE}
+
+db_anova_2 <- db_quest %>% mutate(gruppo = as_factor(gruppo))
+
+questionari <- db_quest %>% select(-gruppo, -name) %>% names() %>% as_tibble() %>%
+  rename(x = value)
+
+
+confronto_qit <- brm (qit ~ gruppo, 
+                    data = db_anova_2, 
+                    family = student, 
+                    prior = c(prior(normal(0, 100), class = b)))
+
+
+confronti_quest <- map(.x = questionari$x, ~{
+  
+    model_formula <- paste(.x ," ~ gruppo") %>% as.formula()
+    
+    fit <- update(confronto_qit, formula. = model_formula, newdata=db_anova_2)
+    
+    contr <- emmeans(fit, ~ gruppo)
+    
+    pairs <- pairs(contr)
+    
+    message(glue::glue("{.x} is finished!"))
+  
+  pairs
+  
+  
+}) %>% set_names(., nm = paste(questionari$x))
+
+#saveRDS(confronti_quest, here::here("pairs_questionari.rds"))
+
+```
+
+
+## Power analisys
+
+We calculate the power of our analysis with a *frequentist* (classical) approach
+but in a bayesian framework. We simulated 1000 distributions deriving from the
+comparison of a continuous variable (`pnsHf`) in impaired/not-impaired children.
+We then counted how many simulations did not contain zero in their 95%CI.
+Acceptable "score" was >80% of simulations with non-zero interval,
+corresponding to a 80% "power", if calculated in a classical way.
+
+See here for a step-by-step example:
+https://solomonkurz.netlify.app/post/bayesian-power-analysis-part-i/
+
+```{r power, eval = FALSE}
+# bayesian fit
+
+set.seed(1234)
+
+mu_t <- -0.4     
+sd_t <-  0.9     
+  
+mu_c <- 0.2    
+sd_c <- 1.0   
+
+n <- 50
+
+d <- tibble(group     = rep(c("not-impaired", "impaired"), each = n)) %>% 
+  mutate(treatment = ifelse(group == "not-impaired", 0, 1),
+         y = ifelse(group == "not-impaired", 
+         rnorm(n, mean = mu_c, sd = sd_c),
+         rnorm(n, mean = mu_t, sd = sd_t)))
+
+
+fit_pwr <-
+  brm(data = d,
+      family = gaussian,
+      y ~ 0 + intercept + impaired,
+      prior = c(prior(normal(0, 2), class = b),
+                prior(student_t(3, 1, 1), class = sigma)),
+      seed = 1)
+
+
+sim_d_and_fit <- function(seed, n) {
+  
+  mu_t <- -0.4    
+  sd_t <-  0.9     
+  
+  mu_c <- 0.2    
+  sd_c <- 1.0   
+  
+  set.seed(seed)
+  
+  d <-
+    tibble(group     = rep(c("not-impaired", "impaired"), each = n)) %>% 
+    mutate(treatment = ifelse(group == "not-impaired", 0, 1),
+           y         = ifelse(group == "not-impaired", 
+                              rnorm(n, mean = mu_c, sd = sd_c),
+                              rnorm(n, mean = mu_t, sd = sd_t)))
+  
+  update(fit_pwr,
+         newdata = d, 
+         seed = seed) %>% 
+    tidy(prob = .95) %>% 
+    filter(term == "b_impaired")
+}
+
+# simulation
+
+n_sim <- 1000    
+ssize <- 50     # sample size
+
+sim <-
+  tibble(seed = 1:n_sim) %>% 
+  mutate(tidy = map(seed, sim_d_and_fit, n = ssize)) %>%
+  unnest(tidy)
+
+
+pwr <- sim %>% 
+  mutate(check = ifelse(upper < 0, 1, 0)) %>% 
+  summarise(power = mean(check))
+
+pwr
+
+```
+
